@@ -21,7 +21,7 @@ from django.utils._os import safe_join
 from django.utils.deconstruct import deconstructible
 from dropbox import Dropbox
 from dropbox.exceptions import ApiError
-from dropbox.files import CommitInfo, UploadSessionCursor
+from dropbox.files import CommitInfo, UploadSessionCursor, FolderMetadata, FileMetadata
 
 from storages.utils import setting
 
@@ -40,9 +40,9 @@ class DropBoxFile(File):
     @property
     def file(self):
         if not hasattr(self, '_file'):
-            response = self._storage.client.files_download(self.name)
+            meta, response = self._storage.client.files_download(self.name)
             self._file = SpooledTemporaryFile()
-            copyfileobj(response, self._file)
+            self._file.write(response.content)
             self._file.seek(0)
         return self._file
 
@@ -78,14 +78,12 @@ class DropBoxStorage(Storage):
     def listdir(self, path):
         directories, files = [], []
         full_path = self._full_path(path)
-        metadata = self.client.files_get_metadata(full_path)
-        for entry in metadata['contents']:
-            entry['path'] = entry['path'].replace(full_path, '', 1)
-            entry['path'] = entry['path'].replace('/', '', 1)
-            if entry['is_dir']:
-                directories.append(entry['path'])
-            else:
-                files.append(entry['path'])
+        metadata = self.client.files_list_folder(full_path)
+        for entry in metadata.entries:
+            if isinstance(entry, FolderMetadata):
+                directories.append(entry.path_lower)
+            elif isinstance(entry, FileMetadata):
+                files.append(entry.path_lower)
         return directories, files
 
     def size(self, name):
@@ -139,3 +137,4 @@ class DropBoxStorage(Storage):
                     content.read(self.CHUNK_SIZE), cursor
                 )
                 cursor.offset = content.tell()
+
